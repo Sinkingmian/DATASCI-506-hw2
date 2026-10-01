@@ -4,6 +4,7 @@ format:
   html:
     code-fold: false
     embed-resources: true
+    html-math-method: mathml
     toc: true
 execute:
   echo: true

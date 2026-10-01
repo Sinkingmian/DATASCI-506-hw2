@@ -1,0 +1,234 @@
+---
+title: "Homework 2 - Problem 3: Linear Regression"
+format:
+  html:
+    code-fold: false
+    embed-resources: true
+    html-math-method: mathml
+    toc: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+```{r}
+#| label: setup
+youtube <- read.csv(
+  "https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-03-02/youtube.csv"
+)
+
+characteristics <- c(
+  "funny", "show_product_quickly", "patriotic", "celebrity",
+  "danger", "animals", "use_sex"
+)
+
+engagement <- c(
+  "view_count", "like_count", "dislike_count",
+  "favorite_count", "comment_count"
+)
+```
+
+## (a) Data preparation and de-identification
+
+I removed the brand and all fields that identify a video or describe its
+YouTube publication. These fields are the two URLs, YouTube ID, kind, etag,
+publication time, title, description, thumbnail, channel name, and category
+ID. The remaining data contain only year, the seven binary characteristics,
+and the five engagement variables.
+
+```{r}
+identifying_variables <- c(
+  "brand", "superbowl_ads_dot_com_url", "youtube_url", "id", "kind",
+  "etag", "published_at", "title", "description", "thumbnail",
+  "channel_title", "category_id"
+)
+
+youtube_deidentified <- youtube[
+  setdiff(names(youtube), identifying_variables)
+]
+
+dim(youtube_deidentified)
+```
+
+The de-identified data set has `r nrow(youtube_deidentified)` rows and
+`r ncol(youtube_deidentified)` columns.
+
+## (b) Exploring potential outcomes
+
+The table below summarizes the distributions. The maximum values are much
+larger than the medians for all four nonconstant engagement counts, indicating
+strong right skew. Because some of these variables contain zeros, I use
+`log1p(x)`, which is equal to `log(1 + x)`, rather than `log(x)`.
+
+```{r}
+distribution_summary <- do.call(
+  rbind,
+  lapply(engagement, function(variable) {
+    x <- youtube_deidentified[[variable]]
+    data.frame(
+      variable = variable,
+      non_missing = sum(!is.na(x)),
+      missing = sum(is.na(x)),
+      zeros = sum(x == 0, na.rm = TRUE),
+      minimum = min(x, na.rm = TRUE),
+      median = median(x, na.rm = TRUE),
+      mean = mean(x, na.rm = TRUE),
+      maximum = max(x, na.rm = TRUE)
+    )
+  })
+)
+
+knitr::kable(distribution_summary, digits = 1)
+```
+
+```{r}
+#| fig-width: 10
+#| fig-height: 7
+par(mfrow = c(2, 2), mar = c(4, 4, 3, 1))
+for (variable in setdiff(engagement, "favorite_count")) {
+  hist(
+    log1p(youtube_deidentified[[variable]]),
+    main = paste("Distribution of log1p(", variable, ")", sep = ""),
+    xlab = paste0("log1p(", variable, ")"),
+    col = "steelblue",
+    border = "white"
+  )
+}
+par(mfrow = c(1, 1))
+```
+
+My decisions are:
+
+- `view_count`: category 2. It is extremely right-skewed, so I use
+  `log1p(view_count)`.
+- `like_count`: category 2. It is right-skewed and contains zeros, so I use
+  `log1p(like_count)`.
+- `dislike_count`: category 2. It is right-skewed and contains zeros, so I use
+  `log1p(dislike_count)`.
+- `favorite_count`: category 3. Every one of its 231 observed values is zero,
+  so it has no variation for a linear regression to explain.
+- `comment_count`: category 2. It is right-skewed and contains zeros, so I use
+  `log1p(comment_count)`.
+
+```{r}
+analysis_data <- youtube_deidentified
+analysis_data[characteristics] <- lapply(
+  analysis_data[characteristics], as.integer
+)
+
+analysis_data$log_view_count <- log1p(analysis_data$view_count)
+analysis_data$log_like_count <- log1p(analysis_data$like_count)
+analysis_data$log_dislike_count <- log1p(analysis_data$dislike_count)
+analysis_data$log_comment_count <- log1p(analysis_data$comment_count)
+```
+
+## (c) Fitting linear regression models
+
+For every outcome-characteristic combination, I fit a separate model of the
+form `transformed outcome ~ binary characteristic + year`. The coefficient
+reported below is for the binary characteristic and is adjusted for year.
+
+```{r}
+outcomes <- c(
+  "log_view_count", "log_like_count",
+  "log_dislike_count", "log_comment_count"
+)
+
+model_results <- do.call(
+  rbind,
+  lapply(outcomes, function(outcome) {
+    do.call(
+      rbind,
+      lapply(characteristics, function(characteristic) {
+        model <- lm(
+          reformulate(c(characteristic, "year"), response = outcome),
+          data = analysis_data
+        )
+        coefficient <- coef(summary(model))[characteristic, ]
+        data.frame(
+          outcome = outcome,
+          characteristic = characteristic,
+          estimate = unname(coefficient["Estimate"]),
+          p_value = unname(coefficient["Pr(>|t|)"])
+        )
+      })
+    )
+  })
+)
+
+display_results <- model_results
+display_results$estimate <- round(display_results$estimate, 4)
+display_results$p_value <- format.pval(
+  display_results$p_value, digits = 4, eps = 0.0001
+)
+knitr::kable(display_results)
+```
+
+The assignment text does not display a numerical significance level, so I use
+the conventional alpha = 0.05. At this level, none of the seven commercial
+characteristics has a statistically significant association with any of the
+four analyzed engagement outcomes after adjusting for year. Therefore, there
+are no statistically significant positive or negative associations to report.
+
+For view counts, `danger` has the largest positive estimated association:
+its estimated coefficient is `r round(subset(model_results, outcome == "log_view_count" & characteristic == "danger")$estimate, 4)`
+on the `log1p(view_count)` scale. It also has the smallest view-count p-value
+(`r round(subset(model_results, outcome == "log_view_count" & characteristic == "danger")$p_value, 4)`).
+
+## (d) Estimating regression coefficients using matrix algebra
+
+Among the seven view-count models, `danger` has the smallest p-value. I
+therefore fit `log1p(view_count) ~ danger + year`. After removing rows with
+missing values, the design matrix contains a column of ones for the intercept,
+followed by `danger` and `year`. I calculate the coefficient vector with the
+ordinary least-squares formula beta-hat = (X-transpose X)^(-1) X-transpose y,
+without using `lm()`.
+
+```{r}
+matrix_data <- analysis_data[
+  complete.cases(
+    analysis_data[c("log_view_count", "danger", "year")]
+  ),
+  c("log_view_count", "danger", "year")
+]
+
+X <- cbind(
+  `(Intercept)` = 1,
+  danger = matrix_data$danger,
+  year = matrix_data$year
+)
+y <- matrix_data$log_view_count
+
+beta_matrix <- solve(t(X) %*% X) %*% t(X) %*% y
+beta_matrix
+```
+
+For comparison, I fit exactly the same model using `lm()`.
+
+```{r}
+comparison_model <- lm(
+  log_view_count ~ danger + year,
+  data = matrix_data
+)
+
+comparison <- data.frame(
+  term = names(coef(comparison_model)),
+  matrix_algebra = as.numeric(beta_matrix),
+  lm = as.numeric(coef(comparison_model)),
+  absolute_difference = abs(
+    as.numeric(beta_matrix) - as.numeric(coef(comparison_model))
+  )
+)
+
+knitr::kable(comparison, digits = 12)
+all.equal(
+  as.numeric(beta_matrix),
+  as.numeric(coef(comparison_model)),
+  tolerance = 1e-10
+)
+```
+
+The absolute differences are only numerical rounding error, and `all.equal()`
+returns `TRUE`. Thus, the matrix calculation and `lm()` produce the same
+estimated coefficients up to numerical precision.
