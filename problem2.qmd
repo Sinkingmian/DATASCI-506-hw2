@@ -1,0 +1,102 @@
+---
+title: "Homework 2 - Problem 2: Campus Bus Arrivals"
+format:
+  html:
+    code-fold: false
+    embed-resources: true
+    toc: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Monte Carlo simulation
+
+The simulation below generates all 10,000 days at once. For each multi-hour
+period, `rpois()` produces one value per hour and day, and `rowSums()` adds the
+hourly values within each day. The Normal distributions use standard
+deviations of $\sqrt{16}=4$ and $\sqrt{25}=5$. No loops are used.
+
+```{r}
+set.seed(506)
+
+n_days <- 10000L
+
+# Each row represents one simulated day.
+passengers_6_to_8 <- rowSums(matrix(
+  rpois(n_days * 3L, lambda = 4),
+  nrow = n_days,
+  ncol = 3L
+))
+
+passengers_9 <- rnorm(
+  n_days,
+  mean = 45,
+  sd = sqrt(16)
+)
+
+passengers_10_to_3 <- rowSums(matrix(
+  rpois(n_days * 6L, lambda = 15),
+  nrow = n_days,
+  ncol = 6L
+))
+
+passengers_4 <- rnorm(
+  n_days,
+  mean = 55,
+  sd = sqrt(25)
+)
+
+passengers_5_to_10 <- rowSums(matrix(
+  rpois(n_days * 6L, lambda = 9),
+  nrow = n_days,
+  ncol = 6L
+))
+
+daily_total <- (
+  passengers_6_to_8 +
+  passengers_9 +
+  passengers_10_to_3 +
+  passengers_4 +
+  passengers_5_to_10
+)
+
+estimated_mean <- mean(daily_total)
+monte_carlo_se <- sd(daily_total) / sqrt(n_days)
+
+simulation_result <- data.frame(
+  simulated_days = n_days,
+  estimated_mean = estimated_mean,
+  monte_carlo_se = monte_carlo_se,
+  lower_95 = estimated_mean - 1.96 * monte_carlo_se,
+  upper_95 = estimated_mean + 1.96 * monte_carlo_se
+)
+
+round(simulation_result, 3)
+```
+
+The Monte Carlo estimate is approximately **`r round(estimated_mean, 2)`
+passengers per day**.
+
+## Reasonableness check
+
+Because expectations add, the theoretical daily mean is
+
+$$
+3(4) + 45 + 6(15) + 55 + 6(9) = 256.
+$$
+
+```{r}
+theoretical_mean <- 3 * 4 + 45 + 6 * 15 + 55 + 6 * 9
+
+data.frame(
+  monte_carlo_estimate = round(estimated_mean, 3),
+  theoretical_mean = theoretical_mean,
+  simulation_error = round(estimated_mean - theoretical_mean, 3)
+)
+```
+
+The simulation estimate is close to 256, as expected. Any small difference is
+ordinary Monte Carlo sampling error and would tend to shrink if more days were
+simulated.
