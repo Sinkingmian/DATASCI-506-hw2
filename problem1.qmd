@@ -1,0 +1,230 @@
+---
+title: "Homework 2 - Problem 1: Random Walk with Momentum"
+format:
+  html:
+    code-fold: false
+    embed-resources: true
+    toc: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## (a) Simulation function and input validation
+
+The four rows of `directions` represent right, left, up, and down. Both
+implementations below return a named vector containing the final coordinates.
+
+```{r}
+directions <- rbind(
+  right = c(x = 1L, y = 0L),
+  left  = c(x = -1L, y = 0L),
+  up    = c(x = 0L, y = 1L),
+  down  = c(x = 0L, y = -1L)
+)
+
+check_inputs <- function(n, p) {
+  if (!is.numeric(n) || length(n) != 1L || !is.finite(n) ||
+      n < 1 || n != floor(n)) {
+    stop("n must be one integer greater than or equal to 1.")
+  }
+  if (!is.numeric(p) || length(p) != 1L || !is.finite(p) ||
+      p < 0 || p > 1) {
+    stop("p must be one number between 0 and 1.")
+  }
+  invisible(TRUE)
+}
+```
+
+## (b) Two implementations
+
+### Version 1: `for` loop
+
+The first direction is uniformly sampled from the four possibilities. At each
+later step, a Bernoulli trial determines whether to preserve the previous
+direction; otherwise a new direction is sampled uniformly. The final position
+is the column sum of all step vectors.
+
+```{r}
+momentum_walk1 <- function(n, p) {
+  check_inputs(n, p)
+  n <- as.integer(n)
+
+  direction_ids <- integer(n)
+  direction_ids[1] <- sample.int(4L, 1L)
+
+  if (n >= 2L) {
+    for (step in 2:n) {
+      if (runif(1L) < p) {
+        direction_ids[step] <- direction_ids[step - 1L]
+      } else {
+        direction_ids[step] <- sample.int(4L, 1L)
+      }
+    }
+  }
+
+  final_position <- colSums(directions[direction_ids, , drop = FALSE])
+  setNames(as.integer(final_position), c("x", "y"))
+}
+```
+
+### Version 2: `sapply`
+
+This version uses `sapply()` to generate steps 2 through *n*. The variable
+`previous_direction` stores the state that the next call needs. The first
+direction is then joined to the generated directions and summed.
+
+```{r}
+momentum_walk2 <- function(n, p) {
+  check_inputs(n, p)
+  n <- as.integer(n)
+
+  first_direction <- sample.int(4L, 1L)
+  previous_direction <- first_direction
+
+  remaining_directions <- if (n == 1L) {
+    integer(0)
+  } else {
+    sapply(seq_len(n - 1L), function(step) {
+      current_direction <- if (runif(1L) < p) {
+        previous_direction
+      } else {
+        sample.int(4L, 1L)
+      }
+      previous_direction <<- current_direction
+      current_direction
+    })
+  }
+
+  direction_ids <- c(first_direction, remaining_directions)
+  final_position <- colSums(directions[direction_ids, , drop = FALSE])
+  setNames(as.integer(final_position), c("x", "y"))
+}
+```
+
+The requested demonstrations are:
+
+```{r}
+momentum_walk1(10, 0.6)
+momentum_walk2(10, 0.6)
+momentum_walk1(1000, 0.6)
+momentum_walk2(1000, 0.6)
+```
+
+## (c) Reproducibility
+
+`set.seed()` resets R's pseudo-random-number generator to a known state. If the
+same seed is set immediately before the same simulation, the function receives
+the same sequence of random values and therefore returns the same result.
+
+```{r}
+set.seed(506)
+walk_10_first <- momentum_walk1(10, 0.6)
+set.seed(506)
+walk_10_second <- momentum_walk1(10, 0.6)
+
+set.seed(506)
+walk_1000_first <- momentum_walk1(1000, 0.6)
+set.seed(506)
+walk_1000_second <- momentum_walk1(1000, 0.6)
+
+data.frame(
+  n = c(10, 1000),
+  first_x = c(walk_10_first["x"], walk_1000_first["x"]),
+  first_y = c(walk_10_first["y"], walk_1000_first["y"]),
+  repeated_x = c(walk_10_second["x"], walk_1000_second["x"]),
+  repeated_y = c(walk_10_second["y"], walk_1000_second["y"]),
+  identical = c(
+    identical(walk_10_first, walk_10_second),
+    identical(walk_1000_first, walk_1000_second)
+  ),
+  row.names = NULL
+)
+```
+
+## (d) Does momentum matter in three walks?
+
+```{r}
+distance_from_origin <- function(position) {
+  sqrt(sum(position^2))
+}
+
+set.seed(506)
+momentum_values_d <- c(0, 0.5, 0.9)
+single_walk_results <- data.frame(
+  p = momentum_values_d,
+  t(sapply(momentum_values_d, function(p) momentum_walk1(1000, p)))
+)
+single_walk_results$distance <- apply(
+  single_walk_results[c("x", "y")], 1L, distance_from_origin
+)
+single_walk_results
+```
+
+In these three simulations, the final distance generally grows with momentum.
+However, each row is only one random walk, so a different seed can produce a
+different ordering. A Monte Carlo study is more appropriate for describing
+typical behavior.
+
+## (e) Monte Carlo simulation
+
+For each value of `p`, `replicate()` runs 1,000 independent walks. The code
+calculates each final distance and then takes its mean.
+
+```{r}
+set.seed(506)
+momentum_values <- c(0, 0.25, 0.5, 0.75, 0.9)
+
+mean_distances <- sapply(momentum_values, function(p) {
+  distances <- replicate(
+    1000,
+    distance_from_origin(momentum_walk1(1000, p))
+  )
+  mean(distances)
+})
+
+monte_carlo_results <- data.frame(
+  p = momentum_values,
+  mean_distance = round(mean_distances, 3)
+)
+monte_carlo_results
+```
+
+The mean final distance increases as `p` increases. Momentum creates positive
+dependence between consecutive steps: long runs in one direction become more
+common, so cancellation among steps is reduced. The increase is especially
+large near `p = 1`.
+
+## (f) Computational performance
+
+The benchmarks use more repetitions for the shorter walk and fewer for the
+longer walk so that the document remains practical to render.
+
+```{r}
+library(microbenchmark)
+
+set.seed(506)
+benchmark_1000 <- microbenchmark(
+  loop = momentum_walk1(1000, 0.6),
+  sapply = momentum_walk2(1000, 0.6),
+  times = 100L
+)
+
+set.seed(506)
+benchmark_100000 <- microbenchmark(
+  loop = momentum_walk1(100000, 0.6),
+  sapply = momentum_walk2(100000, 0.6),
+  times = 10L
+)
+
+summary(benchmark_1000, unit = "ms")[c("expr", "median", "mean")]
+summary(benchmark_100000, unit = "ms")[c("expr", "median", "mean")]
+```
+
+The timings printed above determine which implementation is faster on this
+computer. Both versions still perform one state-dependent update per step, so
+`sapply()` cannot fully vectorize this simulation. In addition, it repeatedly
+calls an anonymous function and updates an enclosing variable. That overhead
+usually makes the explicit loop faster, and the absolute timing gap becomes
+more noticeable for 100,000 steps even if the speed ratio is similar.
